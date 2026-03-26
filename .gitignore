@@ -1,0 +1,43 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Vídeos e outputs gerados
+output/
+bgm/
+test_download.*
+out_example/
+*.webm
+*.mkv
+
+# Credenciais e tokens — NUNCA versionar
+cookies.txt
+cookies_from_header.txt
+client_secrets.json
+youtube_token.json
+instagram_token.json
+*.token.json
+.env
+
+# Estado do batch (gerado em runtime)
+batch_state.json
+
+# Arquivos temporários Windows
+%TEMP%/
+Thumbs.db
+desktop.ini
+
+# Torch (wheel local)
+D:/torch_pkgs/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.suo
+*.user

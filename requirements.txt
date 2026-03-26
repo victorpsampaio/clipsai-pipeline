@@ -1,0 +1,35 @@
+# ─── ATENÇÃO: instale o PyTorch ANTES deste arquivo ────────────────────────
+# Veja instruções no README.md — precisa de versão CUDA específica.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Transcrição e segmentação
+whisperx==3.8.2
+faster-whisper==1.2.1
+pyannote-audio==4.0.4
+
+# Detecção de clips
+clipsai==0.2.1
+sentence-transformers==5.3.0
+
+# Download de vídeo
+yt-dlp==2026.3.17
+yt-dlp-ejs==0.8.0
+yt-dlp-youtube-oauth2==1.0.10
+pytubefix==10.3.8
+
+# Upload YouTube / Google APIs
+google-api-python-client==2.193.0
+google-auth-oauthlib==1.3.0
+google-auth-httplib2==0.3.0
+
+# LLM (títulos, hashtags, virality score)
+groq==1.1.1
+
+# Visão computacional (face tracking)
+opencv-python
+mediapipe==0.10.33
+
+# Utilitários
+requests==2.32.5
+numpy
+tqdm

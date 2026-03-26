@@ -1,0 +1,10 @@
+# Lista de vídeos para processar — um por linha.
+# Linhas começando com # são ignoradas.
+# Formatos suportados: watch?v=, youtu.be/, shorts/
+
+# https://www.youtube.com/watch?v=SEU_VIDEO_AQUI
+# https://youtu.be/SEU_VIDEO_AQUI
+https://www.youtube.com/watch?v=npLi94uGjy0
+https://www.youtube.com/watch?v=Plc0XfhOnQg
+https://www.youtube.com/watch?v=g6VWhQY8WcU
+https://www.youtube.com/watch?v=xR1LgYDAccs
