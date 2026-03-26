@@ -745,6 +745,39 @@ def analyze_clip_with_groq(clip_text: str, duration_sec: float, api_key: str) ->
         return None
 
 
+def _load_face_detector():
+    """Load best available face detector. Returns (kind, detector) where kind is 'blazeface' or 'haar'."""
+    # Try mediapipe Tasks API (0.10+) with BlazeFace model — much better than Haar
+    try:
+        import urllib.request as _ur
+        from mediapipe.tasks import python as _mp_python
+        from mediapipe.tasks.python import vision as _mp_vision
+        import mediapipe as _mp
+
+        model_path = Path(__file__).parent / "blaze_face_short_range.tflite"
+        if not model_path.exists():
+            print("    [face-detect] Baixando modelo BlazeFace (~829KB)...")
+            _ur.urlretrieve(
+                "https://storage.googleapis.com/mediapipe-models/face_detector/"
+                "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
+                model_path,
+            )
+        base_opts = _mp_python.BaseOptions(model_asset_path=str(model_path))
+        opts = _mp_vision.FaceDetectorOptions(base_options=base_opts, min_detection_confidence=0.4)
+        detector = _mp_vision.FaceDetector.create_from_options(opts)
+        print("    [face-detect] Usando BlazeFace (mediapipe Tasks API)")
+        return ("blazeface", detector, _mp)
+    except Exception as e:
+        print(f"    [face-detect] BlazeFace indisponível ({e}); usando Haar Cascade")
+
+    # Fallback: OpenCV Haar Cascade
+    import cv2
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    if face_cascade.empty():
+        return ("none", None, None)
+    return ("haar", face_cascade, None)
+
+
 def compute_dynamic_crop_track(
     video_path: Path,
     start_s: float,
@@ -753,18 +786,20 @@ def compute_dynamic_crop_track(
     crop_h: int,
     src_w: int,
     src_h: int,
-    sample_interval: float = 0.5,
+    sample_interval: float = 0.33,
 ) -> list:
-    """Sample frames throughout the clip, detect face positions with MediaPipe, and return
+    """Sample frames throughout the clip, detect face positions, and return
     a smoothed list of (relative_time, x, y) crop keyframes.
 
-    Returns empty list if MediaPipe is unavailable or no faces are detected at all.
+    X follows the detected face horizontally (pan).
+    Y is fixed at the vertical center of the source frame (wide framing — no tight face crop).
+
+    Returns empty list if no faces are detected at all.
     """
     try:
         import cv2
-        import numpy as np
     except ImportError as e:
-        print(f"Dynamic crop requires cv2, numpy: {e}")
+        print(f"Dynamic crop requires cv2: {e}")
         return []
 
     timestamps = []
@@ -775,20 +810,15 @@ def compute_dynamic_crop_track(
     if not timestamps:
         return []
 
+    kind, detector, mp_mod = _load_face_detector()
+    if kind == "none":
+        print("    [dynamic-crop] Nenhum detector disponível; usando center crop")
+        return []
+
     tmp = Path(tempfile.mkdtemp(prefix="dyntrack_"))
     try:
-        # default center positions as fallback
         cx_default = src_w // 2
-        cy_default = src_h // 2
-
         raw_cx = []
-        raw_cy = []
-
-        # Use OpenCV Haar Cascade (no mediapipe dependency)
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        if face_cascade.empty():
-            print("    [dynamic-crop] Haar cascade not found; using center crop")
-            return []
 
         for ts in timestamps:
             frame_file = tmp / f"frame_{int(ts * 1000)}.jpg"
@@ -804,26 +834,31 @@ def compute_dynamic_crop_track(
                 subprocess.run(cmd, capture_output=True, check=True)
             except subprocess.CalledProcessError:
                 raw_cx.append(None)
-                raw_cy.append(None)
                 continue
 
             img = cv2.imread(str(frame_file))
             if img is None:
                 raw_cx.append(None)
-                raw_cy.append(None)
                 continue
 
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+            detected_cx = None
 
-            if len(faces) > 0:
-                # pick largest face
-                fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-                raw_cx.append(int(fx + fw / 2))
-                raw_cy.append(int(fy + fh / 2))
-            else:
-                raw_cx.append(None)
-                raw_cy.append(None)
+            if kind == "blazeface":
+                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                mp_image = mp_mod.Image(image_format=mp_mod.ImageFormat.SRGB, data=rgb)
+                result = detector.detect(mp_image)
+                if result.detections:
+                    best = max(result.detections, key=lambda d: d.categories[0].score)
+                    bb = best.bounding_box
+                    detected_cx = bb.origin_x + bb.width // 2
+            else:  # haar
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+                if len(faces) > 0:
+                    fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+                    detected_cx = int(fx + fw / 2)
+
+            raw_cx.append(detected_cx)
 
         # fill None values with nearest known value (forward then backward fill)
         def fill(values, default):
@@ -843,29 +878,33 @@ def compute_dynamic_crop_track(
             return filled
 
         cx_filled = fill(raw_cx, cx_default)
-        cy_filled = fill(raw_cy, cy_default)
 
-        if all(v == cx_default for v in cx_filled) and all(v == cy_default for v in cy_filled):
+        if all(v == cx_default for v in cx_filled):
             print("  No faces detected in any sampled frame; falling back to center crop")
             return []
 
-        # smooth with exponential moving average to avoid jitter
-        alpha = 0.15
-        sm_cx = [cx_filled[0]]
-        sm_cy = [cy_filled[0]]
+        # EMA smoothing — α=0.35 reacts faster than old α=0.15
+        alpha = 0.35
+        sm_cx = [float(cx_filled[0])]
         for j in range(1, len(cx_filled)):
             sm_cx.append(alpha * cx_filled[j] + (1 - alpha) * sm_cx[-1])
-            sm_cy.append(alpha * cy_filled[j] + (1 - alpha) * sm_cy[-1])
 
-        # convert face centers to crop top-left x,y (clamped to valid range)
+        # Velocity clamping: max 180px/s so crop can't jump more than this per sample
+        max_vel_px = 180.0 * sample_interval
+        for j in range(1, len(sm_cx)):
+            dx = sm_cx[j] - sm_cx[j - 1]
+            if abs(dx) > max_vel_px:
+                sm_cx[j] = sm_cx[j - 1] + max_vel_px * (1 if dx > 0 else -1)
+
+        # Y is fixed at vertical center — wide framing, no tight face crop
+        y_fixed = max(0, min((src_h - crop_h) // 2, src_h - crop_h))
+
         keyframes = []
         for j, ts in enumerate(timestamps):
             x = int(round(sm_cx[j] - crop_w / 2))
-            y = int(round(sm_cy[j] - crop_h / 2))
             x = max(0, min(x, src_w - crop_w))
-            y = max(0, min(y, src_h - crop_h))
             rel_t = round(ts - start_s, 3)
-            keyframes.append((rel_t, x, y))
+            keyframes.append((rel_t, x, y_fixed))
 
         print(f"  Dynamic crop: {len(keyframes)} keyframes, x range [{min(k[1] for k in keyframes)}-{max(k[1] for k in keyframes)}]")
         return keyframes
