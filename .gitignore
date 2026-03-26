@@ -1,5 +1,8 @@
 # Python
 .venv/
+venv/
+env/
+.env/
 __pycache__/
 *.pyc
 *.pyo
@@ -24,6 +27,9 @@ youtube_token.json
 instagram_token.json
 *.token.json
 .env
+.venv311
+.venv
+.venv_transcribe
 
 # Estado do batch (gerado em runtime)
 batch_state.json
@@ -35,6 +41,9 @@ desktop.ini
 
 # Torch (wheel local)
 D:/torch_pkgs/
+
+# Claude Code
+.claude/
 
 # IDE
 .vscode/settings.json
